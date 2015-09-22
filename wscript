@@ -7,6 +7,9 @@ Waf buildscript which includes the tool.
 The actual funcionality of this tool is found in tool.py in this repository.
 """
 
+APPNAME = 'waf-build-statistics'
+VERSION = '1.0.0'
+
 
 def configure(conf):
     """Load the tool."""
