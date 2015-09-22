@@ -89,9 +89,13 @@ def save_data(self):
     """
     new = new_build_statistics
     old = old_build_statistics
+
+    compare_with = 'previous build'
+
     if self.has_tool_option('compare_build'):
         build_stats = self.get_tool_option('compare_build')
         if os.path.exists(build_stats):
+            compare_with = build_stats
             new = dict(
                 old_build_statistics.items() + new_build_statistics.items())
             with open(build_stats) as data_file:
@@ -100,11 +104,9 @@ def save_data(self):
             Logs.warn('{} does not exists.'.format(build_stats))
 
     if new and old:
+        Logs.pprint('BOLD', "Build statistics: (compared with {})".format(
+            compare_with))
 
-        # Description of the color codes.
-        explaination = \
-            "\x1b[0m (\x1b[36mdecrease\x1b[32m/\x1b[35mincrease\x1b[32m)"
-        Logs.pprint('BOLD', "Build statistics:" + explaination)
         print_summary(old, new)
 
     f = os.path.join(self.bldnode.nice_path(), filename)
