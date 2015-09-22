@@ -33,10 +33,11 @@ def get_data(self):
     global old_build_statistics
     if old_build_statistics:
         return
-    f = os.path.join(self.bld.bldnode.nice_path(), filename)
 
     if old_build_statistics is None:
         old_build_statistics = {}
+
+        f = os.path.join(self.bld.bldnode.nice_path(), filename)
         if os.path.exists(f):
             with open(f) as data_file:
                 old_build_statistics = json.load(data_file) or {}
@@ -95,8 +96,7 @@ def save_data(self):
 
     f = os.path.join(self.bldnode.nice_path(), filename)
     with open(f, 'w') as outfile:
-        d = old_build_statistics.copy()
-        d.update(new_build_statistics)
+        d = dict(old_build_statistics.items() + new_build_statistics.items())
         json.dump(d, outfile)
 
 
