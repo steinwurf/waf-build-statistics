@@ -120,6 +120,9 @@ class TestTool(unittest.TestCase):
         # setup mocks
         mock_self = mock.Mock()
         mock_self.bldnode.nice_path = lambda: '.'
+
+        mock_self.has_tool_option = lambda key: False
+
         mocked_open = mock.mock_open()
         tool.open = mocked_open
         tool.json = mock.Mock()

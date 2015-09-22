@@ -87,12 +87,25 @@ def save_data(self):
     This function writes all the collected data to a file, and, if any changes
     happened, writes summary.
     """
-    if new_build_statistics and old_build_statistics:
+    new = new_build_statistics
+    old = old_build_statistics
+    if self.has_tool_option('compare_build'):
+        build_stats = self.get_tool_option('compare_build')
+        if os.path.exists(build_stats):
+            new = dict(
+                old_build_statistics.items() + new_build_statistics.items())
+            with open(build_stats) as data_file:
+                old = json.load(data_file)
+        else:
+            Logs.warn('{} does not exists.'.format(build_stats))
+
+    if new and old:
+
         # Description of the color codes.
         explaination = \
             "\x1b[0m (\x1b[36mdecrease\x1b[32m/\x1b[35mincrease\x1b[32m)"
         Logs.pprint('BOLD', "Build statistics:" + explaination)
-        print_summary(old_build_statistics, new_build_statistics)
+        print_summary(old, new)
 
     f = os.path.join(self.bldnode.nice_path(), filename)
     with open(f, 'w') as outfile:
@@ -124,7 +137,7 @@ def print_summary(old, new):
         compare_build('total', total_old, total_new, key)
 
 
-def compare_build(build, old_stats, new_stats, key):
+def compare_build(build, old_stats, new_stats, key, min_change=0.5):
     """Compare two build tasks and print a description."""
     old_stat = old_stats[key]
     new_stat = new_stats[key]
@@ -133,14 +146,16 @@ def compare_build(build, old_stats, new_stats, key):
         return
 
     percent = (new_stat - old_stat) / old_stat * 100
-    if abs(percent) < 0.5:
+
+    if abs(percent) < min_change:
         return
+
     color = None
     if percent < 0:
         color = 'CYAN'
     else:
         color = 'PINK'
-    Logs.pprint(color, '  {build:<55} {key:<12} {percent:>6.2f}%'.format(
+    Logs.pprint(color, '  {build:<70} {key:<12} {percent:>6.2f}%'.format(
         build=build,
         key=key,
         percent=percent))
