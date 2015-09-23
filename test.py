@@ -42,6 +42,103 @@ class TestTool(unittest.TestCase):
         # reload tool after each test to reset monkey patches
         self.tool = load_tool()
 
+    def test_complete(self):
+        """Test the overall functionality."""
+        tool = self.tool
+
+        mock_self = mock.Mock()
+        mock_self.bld.bldnode.nice_path = lambda: '.'
+
+        old_build_statistics = {
+            'task_old_1': {
+                'compile_time': 3,
+                'file_size': 3,
+            },
+            'task_1_1': {
+                'compile_time': 10,
+                'file_size': 5,
+            },
+        }
+
+        # monkey patch and call get_data
+        with \
+                mock.patch('os.path.exists', lambda path: True), \
+                mock.patch('__builtin__.open', mock.mock_open()), \
+                mock.patch('json.load', lambda datafile: old_build_statistics):
+            tool.get_data(mock_self)
+
+        # check result of get_data
+        self.assertEqual(old_build_statistics, tool.old_build_statistics)
+
+        # setup task mocks
+        mock_compiled_tasks = [mock.Mock(), mock.Mock()]
+        mock_self.compiled_tasks = mock_compiled_tasks
+        mock_link_task = mock.Mock()
+        mock_self.link_task = mock_link_task
+
+        mock_tasks = mock_compiled_tasks + [mock_link_task]
+
+        i = 1
+        for task in mock_tasks:
+            task.run = lambda: True
+            task.outputs = []
+            for j in range(1, i + 1):
+                mock_output = mock.Mock()
+                mock_output.nice_path = mock.Mock(
+                    return_value='task_{}_{}'.format(i, j))
+                task.outputs.append(mock_output)
+
+            i += 1
+
+        # call collect_data_from_tasks
+        tool.collect_data_from_tasks(mock_self)
+
+        # check that a add_post_fun has been called
+        mock_self.bld.add_post_fun.assert_called_once_with(tool.save_data)
+
+        # implicitly call collect_data_from_run by calling task.run
+        mock_time = mock.Mock(side_effect=range(0, len(mock_tasks * 2) * 5, 5))
+        with \
+                mock.patch('os.path.getsize', lambda path: 1024 * 10), \
+                mock.patch('time.time', mock_time):
+            for task in mock_tasks:
+                self.assertEqual(True, task.run())
+
+        # check results
+        expected_new_build_statistics = {
+            'task_1_1': {'compile_time': 5, 'file_size': 10},
+            'task_2_1': {'compile_time': 5, 'file_size': 10},
+            'task_2_2': {'compile_time': 5, 'file_size': 10},
+            'task_3_1': {'compile_time': 5, 'file_size': 10},
+            'task_3_2': {'compile_time': 5, 'file_size': 10},
+            'task_3_3': {'compile_time': 5, 'file_size': 10}
+        }
+
+        self.assertEqual(
+            expected_new_build_statistics,
+            tool.new_build_statistics)
+
+        # setup mocks for save_data
+        mock_self.has_tool_option = lambda option: False
+        mock_self.bldnode.nice_path = mock_self.bld.bldnode.nice_path
+        # call save_data
+        mock_json_dump = mock.Mock()
+        mock_Logs = mock.Mock()
+        with \
+                mock.patch('__builtin__.open', mock.mock_open()), \
+                mock.patch('tool.Logs', mock_Logs), \
+                mock.patch('json.dump', mock_json_dump):
+            tool.save_data(mock_self)
+
+        self.assertTrue('task_1_1' in mock_Logs.pprint.mock_calls[1][1][1])
+        self.assertTrue('task_1_1' in mock_Logs.pprint.mock_calls[2][1][1])
+
+        self.assertTrue('100.00%' in mock_Logs.pprint.mock_calls[1][1][1])
+        self.assertTrue('100.00%' in mock_Logs.pprint.mock_calls[2][1][1])
+
+        self.assertTrue('total' in mock_Logs.pprint.mock_calls[-1][1][1])
+        self.assertTrue('total' in mock_Logs.pprint.mock_calls[-2][1][1])
+
     def test_get_data(self):
         """Test the tool module's get_data function."""
         tool = self.tool
@@ -63,8 +160,8 @@ class TestTool(unittest.TestCase):
 
         self.assertEqual(tool.old_build_statistics, {})
 
-    def test_time_compiled_tasks(self):
-        """Test the tool module's time_compiled_tasks function."""
+    def test_collect_data_from_tasks(self):
+        """Test the tool module's collect_data_from_tasks function."""
         tool = self.tool
 
         # setup mocks
@@ -76,7 +173,7 @@ class TestTool(unittest.TestCase):
         tool.collect_data_from_run = lambda m1, m2: True
 
         # call function to test
-        tool.time_compiled_tasks(mock_self)
+        tool.collect_data_from_tasks(mock_self)
 
         # make sure we've wrapped all the tasks.
         for m in mock_self.compiled_tasks:

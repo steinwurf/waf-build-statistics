@@ -45,7 +45,7 @@ def get_data(self):
 
 @TaskGen.feature('*')
 @TaskGen.after_method('process_source')
-def time_compiled_tasks(self):
+def collect_data_from_tasks(self):
     """
     Wrap tasks to collect information from them.
 
@@ -71,7 +71,7 @@ def collect_data_from_run(f, task):
         return_value = f()
         stop = time.time()
         for output in task.outputs:
-            filesize = os.path.getsize(task.outputs[0].nice_path()) / 1024.0
+            filesize = os.path.getsize(output.nice_path()) / 1024.0
             new_build_statistics[output.nice_path()] = {
                 'file_size': filesize,
                 'compile_time': (stop - start)
