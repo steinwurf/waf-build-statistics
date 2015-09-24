@@ -22,6 +22,14 @@ old_build_statistics = None
 new_build_statistics = {}
 
 
+def path_to_key(path):
+    """Convert a path to an appropiate key."""
+    path = path.split(os.sep)
+    if path[0] == 'build':
+        path = path[2:]
+    return os.path.join(*path)
+
+
 @TaskGen.feature('*')
 @TaskGen.before_method('process_source')
 def get_data(self):
@@ -31,8 +39,6 @@ def get_data(self):
     Before processing any sources read the past build statistics.
     """
     global old_build_statistics
-    if old_build_statistics:
-        return
 
     if old_build_statistics is None:
         old_build_statistics = {}
@@ -41,6 +47,25 @@ def get_data(self):
         if os.path.exists(f):
             with open(f) as data_file:
                 old_build_statistics = json.load(data_file) or {}
+
+    # collect sources
+    for source in self.source if type(self.source) is list else [self.source]:
+        if not source:
+            continue
+        if hasattr(source, 'nice_path'):
+            source = source.nice_path()
+        else:
+            # Assume it's a string
+            source = os.path.join(self.path.nice_path(), source)
+
+        new_build_statistics[path_to_key(source)] = {
+            'stats': {
+                'size': {
+                    'value': os.path.getsize(source) / 1024.0,
+                    'unit': 'kb'
+                }
+            }
+        }
 
 
 @TaskGen.feature('*')
@@ -52,12 +77,20 @@ def collect_data_from_tasks(self):
     This function wraps each task with the collect_data_from_run function so
     that the needed data is collected.
     """
+    tasks = []
     if hasattr(self, 'compiled_tasks'):
-        for t in self.compiled_tasks:
-            t.run = collect_data_from_run(t.run, t)
+        tasks = self.compiled_tasks
+
     if hasattr(self, 'link_task'):
-        t = self.link_task
-        t.run = collect_data_from_run(t.run, t)
+        tasks.append(self.link_task)
+
+    for task in tasks:
+        task.run = collect_data_from_run(task.run, task)
+        for output in task.outputs:
+            key = path_to_key(output.nice_path())
+            new_build_statistics[key] = {
+                'sources': [path_to_key(i.nice_path()) for i in task.inputs]
+            }
 
     if 'post_funs' not in dir(self.bld) or save_data not in self.bld.post_funs:
         self.bld.add_post_fun(save_data)
@@ -66,15 +99,20 @@ def collect_data_from_tasks(self):
 def collect_data_from_run(f, task):
     """Collect compile time and the resulting file size from task."""
     def wrap_run():
-        new_build_statistics
         start = time.time()
         return_value = f()
         stop = time.time()
         for output in task.outputs:
-            filesize = os.path.getsize(output.nice_path()) / 1024.0
-            new_build_statistics[output.nice_path()] = {
-                'file_size': filesize,
-                'compile_time': (stop - start)
+            key = path_to_key(output.nice_path())
+            new_build_statistics[key]['stats'] = {
+                'time': {
+                    'value': (stop - start),
+                    'unit': 's'
+                },
+                'size': {
+                    'value': os.path.getsize(output.nice_path()) / 1024.0,
+                    'unit': 'kb'
+                }
             }
         return return_value
     return wrap_run
@@ -87,77 +125,129 @@ def save_data(self):
     This function writes all the collected data to a file, and, if any changes
     happened, writes summary.
     """
-    new = new_build_statistics
-    old = old_build_statistics
+    build_statistics = {}
+    for k in new_build_statistics:
+        if k not in old_build_statistics:
+            build_statistics[k] = new_build_statistics[k]
+            continue
+        build_statistics[k] = old_build_statistics[k].copy()
+        build_statistics[k].update(new_build_statistics[k])
 
+    compare_stats = old_build_statistics
     compare_with = 'previous build'
 
-    if self.has_tool_option('compare_build'):
-        build_stats = self.get_tool_option('compare_build')
-        if os.path.exists(build_stats):
-            compare_with = build_stats
-            new = dict(
-                old_build_statistics.items() + new_build_statistics.items())
-            with open(build_stats) as data_file:
-                old = json.load(data_file)
+    if self.has_tool_option('compare_with'):
+        compare_with = self.get_tool_option('compare_with')
+        if os.path.exists(compare_with):
+            with open(compare_with) as data_file:
+                compare_stats = json.load(data_file)
         else:
-            Logs.warn('{} does not exists.'.format(build_stats))
+            compare_stats = {}
+            Logs.warn('{} does not exists.'.format(compare_with))
 
-    if new and old:
-        Logs.pprint('BOLD', "Build statistics: (compared with {})".format(
-            compare_with))
+    if compare_stats:
 
-        print_summary(old, new)
+        outputs = print_summary(compare_stats, build_statistics)
+        if outputs:
+            Logs.pprint('BOLD', "Build statistics: (compared with {})".format(
+                compare_with))
+        for output in outputs:
+            color, message = output
+            Logs.pprint(color, '  ' + message)
 
     f = os.path.join(self.bldnode.nice_path(), filename)
     with open(f, 'w') as outfile:
-        d = dict(old_build_statistics.items() + new_build_statistics.items())
-        json.dump(d, outfile)
+        json.dump(build_statistics, outfile)
 
 
 def print_summary(old, new):
     """Print a summary of the changes between the new and old dictionary."""
+    output = []
     total_old = {}
     total_new = {}
-    for build in set(old) & set(new):
-        old_stats = old[build]
-        new_stats = new[build]
+    max_length = 0
 
-        for key in set(old_stats) & set(new_stats):
-            compare_build(build, old_stats, new_stats, key)
+    def zero_stats(template):
+        for k in template:
+            template[k]['value'] = 0
+        return template
+
+    for build in sorted(set(old) | set(new)):
+        if build in old:
+            old_stats = old[build]['stats']
+        else:
+            old_stats = zero_stats(new[build]['stats'])
+
+        if build in old:
+            new_stats = new[build]['stats']
+        else:
+            new_stats = zero_stats(old[build]['stats'])
+
+        for key in sorted(set(old_stats) & set(new_stats)):
+            result = compare_build(build, old_stats, new_stats, key)
+            if not result:
+                continue
+            else:
+                output.append(result)
+
+            max_length = max(max_length, len(result[1]))
+
+        for key in old_stats:
             if key not in total_old:
-                total_old[key] = 0
-            total_old[key] += old_stats[key]
-            if key not in total_new:
-                total_new[key] = 0
-            total_new[key] += new_stats[key]
+                total_old[key] = old_stats[key].copy()
+            else:
+                assert total_old[key]['unit'] == old_stats[key]['unit']
+                total_old[key]['value'] += old_stats[key]['value']
 
-    total_keys = set(total_old) & set(total_new)
-    if total_keys:
-        Logs.pprint('BLUE', '  ' + '-' * 80)
-    for key in total_keys:
-        compare_build('total', total_old, total_new, key)
+        for key in new_stats:
+            if key not in total_new:
+                total_new[key] = new_stats[key].copy()
+            else:
+                assert total_new[key]['unit'] == new_stats[key]['unit']
+                total_new[key]['value'] += new_stats[key]['value']
+
+    if output:
+        output.append(('BLUE', '-' * (max_length)))
+
+    for key in set(total_old) & set(total_new):
+        result = compare_build('total', total_old, total_new, key, 0)
+        if result:
+            output.append(result)
+
+    return output
 
 
 def compare_build(build, old_stats, new_stats, key, min_change=0.5):
     """Compare two build tasks and print a description."""
-    old_stat = old_stats[key]
-    new_stat = new_stats[key]
+    assert old_stats[key]['unit'] == new_stats[key]['unit']
 
-    if old_stat == new_stat:
-        return
+    unit = old_stats[key]['unit']
 
-    percent = (new_stat - old_stat) / old_stat * 100
+    old_stat = old_stats[key]['value']
+    new_stat = new_stats[key]['value']
 
-    if abs(percent) < min_change:
-        return
+    if len(build) > 70:
+        build = '(...)' + build[-(70-5):]
+    message = '{build:<70}'.format(build=build)
+    message += ' {key}'.format(key=key)
+    message += ' {new_stat:>12.2f}{unit:<3}/{old_stat:>10.2f}{unit:<3}'.format(
+        old_stat=old_stat,
+        new_stat=new_stat,
+        unit=unit)
 
-    color = None
+    diff = (new_stat - old_stat)
+    message += ' {diff:>10.2f}{unit:<3}'.format(diff=diff, unit=unit)
+
+    percent = 0
+    if old_stat != 0:
+        percent = diff / old_stat * 100
+        if abs(percent) < min_change:
+            return
+        message += ' {percent:>7.2f}%'.format(percent=percent)
+
+    color = 'PINK'
     if percent < 0:
+        # decrease
         color = 'CYAN'
-    else:
-        color = 'PINK'
-    Logs.pprint(color, '  {build:<70} {key:<12} {percent:>6.2f}%'.format(
-        build=build,
-        key=key,
-        percent=percent))
+
+    return (color,  message)
