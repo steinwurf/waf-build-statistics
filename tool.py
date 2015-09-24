@@ -147,25 +147,21 @@ def save_data(self):
 
     if compare_stats:
 
-        outputs = print_summary(compare_stats, build_statistics)
-        if outputs:
-            Logs.pprint('BOLD', "Build statistics: (compared with {})".format(
-                compare_with))
-        for output in outputs:
-            color, message = output
-            Logs.pprint(color, '  ' + message)
+        total_summary, summaries = \
+            generate_summaries(compare_stats, build_statistics)
+
+        print_summaries(total_summary, summaries)
 
     f = os.path.join(self.bldnode.nice_path(), filename)
     with open(f, 'w') as outfile:
         json.dump(build_statistics, outfile)
 
 
-def print_summary(old, new):
-    """Print a summary of the changes between the new and old dictionary."""
-    output = []
+def generate_summaries(old, new):
+    """Generate data summarising the changes between the new and old dict."""
+    summaries = []
     total_old = {}
     total_new = {}
-    max_length = 0
 
     def zero_stats(template):
         for k in template:
@@ -184,13 +180,11 @@ def print_summary(old, new):
             new_stats = zero_stats(old[build]['stats'])
 
         for key in sorted(set(old_stats) & set(new_stats)):
-            result = compare_build(build, old_stats, new_stats, key)
-            if not result:
+            summary = generate_summary(build, old_stats, new_stats, key)
+            if not summary:
                 continue
             else:
-                output.append(result)
-
-            max_length = max(max_length, len(result[1]))
+                summaries.append(summary)
 
         for key in old_stats:
             if key not in total_old:
@@ -206,48 +200,106 @@ def print_summary(old, new):
                 assert total_new[key]['unit'] == new_stats[key]['unit']
                 total_new[key]['value'] += new_stats[key]['value']
 
-    if output:
-        output.append(('BLUE', '-' * (max_length)))
-
+    total_summary = []
     for key in set(total_old) & set(total_new):
-        result = compare_build('total', total_old, total_new, key, 0)
-        if result:
-            output.append(result)
+        summary = generate_summary('total', total_old, total_new, key)
+        total_summary.append(summary)
 
-    return output
+    return total_summary, summaries
 
 
-def compare_build(build, old_stats, new_stats, key, min_change=0.5):
-    """Compare two build tasks and print a description."""
-    assert old_stats[key]['unit'] == new_stats[key]['unit']
+def generate_summary(build, old_stats, new_stats, stat):
+    """Compare two build tasks and generate a summary."""
+    assert old_stats[stat]['unit'] == new_stats[stat]['unit']
 
-    unit = old_stats[key]['unit']
-
-    old_stat = old_stats[key]['value']
-    new_stat = new_stats[key]['value']
-
-    if len(build) > 70:
-        build = '(...)' + build[-(70-5):]
-    message = '{build:<70}'.format(build=build)
-    message += ' {key}'.format(key=key)
-    message += ' {new_stat:>12.2f}{unit:<3}/{old_stat:>10.2f}{unit:<3}'.format(
-        old_stat=old_stat,
-        new_stat=new_stat,
-        unit=unit)
-
+    summary = {'build': build, 'stat': stat}
+    summary['unit'] = old_stats[stat]['unit']
+    old_stat = old_stats[stat]['value']
+    summary['old_stat'] = old_stat
+    new_stat = new_stats[stat]['value']
+    summary['new_stat'] = new_stat
     diff = (new_stat - old_stat)
-    message += ' {diff:>10.2f}{unit:<3}'.format(diff=diff, unit=unit)
+    summary['diff'] = diff
 
-    percent = 0
+    # avoid dividing with zero in case a new file has been added.
     if old_stat != 0:
-        percent = diff / old_stat * 100
-        if abs(percent) < min_change:
-            return
-        message += ' {percent:>7.2f}%'.format(percent=percent)
+        summary['percent'] = diff / old_stat * 100
 
-    color = 'PINK'
-    if percent < 0:
-        # decrease
-        color = 'CYAN'
+    return summary
 
-    return (color,  message)
+
+def print_summaries(total_summary, summaries, max_space=70):
+    """Print total and general summaries nicely."""
+    max_values = {}
+    for summary in summaries:
+        for key in summary:
+            length = len(str(summary[key]))
+            max_values[key] = max(max_values.get(key, length), length)
+            max_values[key] = min(max_values[key], max_space)
+
+    line = (
+        '{build:<{buildl}} '
+        '{stat:<{statl}} '
+        '{new_stat:>{new_statl}} / '
+        '{old_stat:>{old_statl}} '
+        '{diff:>{diffl}} '
+        '{percent:>{percentl}}%')
+
+    def gen_line(build, stat, new_stat, old_stat, diff, percent):
+        short_build = '(...)' + build[-(max_space - 5):]
+        return line.format(
+            build=build if len(build) < max_space else short_build,
+            buildl=max_values['build'],
+            stat=stat,
+            statl=max_values['stat'],
+            new_stat=new_stat,
+            new_statl=max_values['new_stat'] + max_values['unit'],
+            old_stat=old_stat,
+            old_statl=max_values['old_stat'] + max_values['unit'],
+            diff=diff,
+            diffl=max_values['diff'] + max_values['unit'],
+            percent=percent,
+            percentl=max_values['percent'] + 1)
+
+    headings = ['build', 'stat', 'new stat', 'old stat', 'diff', '']
+
+    c = 4
+    new_stat = '{new_stat:0.%sf}{unit:<2}' % c
+    old_stat = '{old_stat:0.%sf}{unit:<2}' % c
+    diff = '{diff:0.2f}{unit:<%s}' % c
+    percent = '{percent:0.%sf}' % c
+
+    def gen_messages(summaries):
+        messages = []
+        for summary in summaries:
+
+            if abs(summary['percent']) < 0.5:
+                continue
+
+            color = 'CYAN' if summary['percent'] < 0 else 'PINK'
+
+            messages.append((color, gen_line(
+                build=summary['build'],
+                stat=summary['stat'],
+                new_stat=new_stat.format(**summary),
+                old_stat=old_stat.format(**summary),
+                diff=diff.format(**summary),
+                percent=percent.format(**summary))))
+        return messages
+
+    messages = gen_messages(sorted(summaries, key=lambda a: abs(a['percent'])))
+    if not messages:
+        return
+
+    heading = gen_line(*headings)
+
+    Logs.pprint('BOLD', heading)
+    footer = '-' * len(heading)
+
+    for message in messages:
+        Logs.pprint(*message)
+
+    Logs.pprint('BLUE', footer)
+
+    for message in gen_messages(total_summary):
+        Logs.pprint(*message)
