@@ -228,21 +228,24 @@ def generate_summary(build, old_stats, new_stats, stat):
     return summary
 
 
-def print_summaries(total_summary, summaries, max_space=70):
+def print_summaries(total_summary, summaries, max_space=70, precision=0):
     """Print total and general summaries nicely."""
     max_values = {}
-    for summary in summaries:
+    for summary in summaries + total_summary:
         for key in summary:
-            length = len(str(summary[key]))
+            element = summary[key]
+            if type(element) is float:
+                element = ('{:0,.%sf}' % precision).format(element)
+            length = len(str(element))
             max_values[key] = max(max_values.get(key, length), length)
             max_values[key] = min(max_values[key], max_space)
 
     line = (
-        '{build:<{buildl}} '
-        '{stat:<{statl}} '
+        '{build:<{buildl}}  '
+        '{stat:<{statl}}  '
         '{new_stat:>{new_statl}} / '
-        '{old_stat:>{old_statl}} '
-        '{diff:>{diffl}} '
+        '{old_stat:>{old_statl}}  '
+        '{diff:>{diffl}}  '
         '{percent:>{percentl}}%')
 
     def gen_line(build, stat, new_stat, old_stat, diff, percent):
@@ -263,11 +266,10 @@ def print_summaries(total_summary, summaries, max_space=70):
 
     headings = ['build', 'stat', 'new stat', 'old stat', 'diff', '']
 
-    c = 4
-    new_stat = '{new_stat:0.%sf}{unit:<2}' % c
-    old_stat = '{old_stat:0.%sf}{unit:<2}' % c
-    diff = '{diff:0.2f}{unit:<%s}' % c
-    percent = '{percent:0.%sf}' % c
+    new_stat = '{new_stat:0,.%sf}{unit:<%s}' % (precision, max_values['unit'])
+    old_stat = '{old_stat:0,.%sf}{unit:<%s}' % (precision, max_values['unit'])
+    diff = '{diff:0,.%sf}{unit:<%s}' % (precision, max_values['unit'])
+    percent = '{percent:0,.%sf}' % precision
 
     def gen_messages(summaries):
         messages = []
@@ -301,5 +303,6 @@ def print_summaries(total_summary, summaries, max_space=70):
 
     Logs.pprint('BLUE', footer)
 
+    Logs.pprint('BOLD', heading)
     for message in gen_messages(total_summary):
         Logs.pprint(*message)
