@@ -3,33 +3,50 @@
 
 """Unit test for tool.py."""
 
+from __future__ import print_function
+
 import sys
 import imp
-import os
 import unittest
 import mock
+import subprocess
+import os
+import json
 
 
 def load_tool():
     """Mock waflib and load the tool module."""
+    # create a new empty moduel using the imp module
     waflib = imp.new_module('waflib')
+
+    # create a new mock which is to mock the waflib's TaskGen
     MockTaskGen = mock.Mock()
 
     def side_effect(wild_card):
         m = mock.Mock(side_effect=lambda func: func)
         return m
 
+    # using the side_effect function, mock the various decoratores used in
+    # tool.py
     MockTaskGen.feature = mock.Mock(side_effect=side_effect)
     MockTaskGen.before_method = mock.Mock(side_effect=side_effect)
     MockTaskGen.after_method = mock.Mock(side_effect=side_effect)
 
+    # set the MockTaskGen as an attribute called TaskGen on the fake waflib
+    # module
     setattr(waflib, 'TaskGen', MockTaskGen)
 
+    # do the same for the Logs attribute
     MockLogs = mock.Mock()
     setattr(waflib, 'Logs', MockLogs)
 
+    # add the fake waflib to sys.modules - when doing so any later imports of
+    # the waflib will not happen.
+    # This allows us to import files which imports the waflib even though that
+    # module is normally only available through waf.
     sys.modules['waflib'] = waflib
 
+    # use imp to find and load the tool module.
     return imp.load_module('tool', *imp.find_module('tool'))
 
 
@@ -37,26 +54,27 @@ class TestTool(unittest.TestCase):
 
     """Test tool."""
 
-    def setUp(self):
-        """Setup test."""
-        # reload tool after each test to reset monkey patches
-        self.tool = load_tool()
-
     def test_complete(self):
         """Test the overall functionality."""
-        tool = self.tool
+        tool = load_tool()
 
         mock_self = mock.Mock()
         mock_self.bld.bldnode.nice_path = lambda: '.'
 
         old_build_statistics = {
-            'task_old_1': {
-                'compile_time': 3,
-                'file_size': 3,
+            'output_old_1': {
+                'time': {'value': 3, 'unit': 's'},
+                'size': {'value': 3, 'unit': 'kb'},
             },
-            'task_1_1': {
-                'compile_time': 10,
-                'file_size': 5,
+            'output_1_1': {
+                'time': {'value': 10, 'unit': 's'},
+                'size': {'value': 5, 'unit': 'kb'},
+
+            },
+            'output_2_1': {
+                'time': {'value': 5, 'unit': 's'},
+                'size': {'value': 10, 'unit': 'kb'},
+
             },
         }
 
@@ -85,33 +103,59 @@ class TestTool(unittest.TestCase):
             for j in range(1, i + 1):
                 mock_output = mock.Mock()
                 mock_output.nice_path = mock.Mock(
-                    return_value='task_{}_{}'.format(i, j))
+                    return_value='output_{}_{}'.format(i, j))
                 task.outputs.append(mock_output)
-
             i += 1
 
         # call collect_data_from_tasks
         tool.collect_data_from_tasks(mock_self)
 
         # check that a add_post_fun has been called
-        mock_self.bld.add_post_fun.assert_called_once_with(tool.save_data)
+        mock_self.bld.add_post_fun.assert_has_calls(
+            [mock.call(tool.get_sizes), mock.call(tool.save_data)])
+
+        # check that all tasks has been created
+        self.assertEqual(
+            set([o.nice_path() for t in mock_tasks for o in t.outputs]),
+            set(tool.new_build_statistics.keys()))
+
+        mock_group = mock.Mock()
+        mock_group.tasks = mock_tasks
+        mock_self.groups = [[mock_group]]
+
+        with mock.patch('os.path.getsize', lambda path: 1024 * 10):
+            tool.get_sizes(mock_self)
+
+        # check that a size is now present for all outputs
+        for key, value in tool.new_build_statistics.iteritems():
+            self.assertTrue('size' in value)
 
         # implicitly call collect_data_from_run by calling task.run
         mock_time = mock.Mock(side_effect=range(0, len(mock_tasks * 2) * 5, 5))
-        with \
-                mock.patch('os.path.getsize', lambda path: 1024 * 10), \
-                mock.patch('time.time', mock_time):
+        with mock.patch('time.time', mock_time):
             for task in mock_tasks:
                 self.assertEqual(True, task.run())
 
         # check results
         expected_new_build_statistics = {
-            'task_1_1': {'compile_time': 5, 'file_size': 10},
-            'task_2_1': {'compile_time': 5, 'file_size': 10},
-            'task_2_2': {'compile_time': 5, 'file_size': 10},
-            'task_3_1': {'compile_time': 5, 'file_size': 10},
-            'task_3_2': {'compile_time': 5, 'file_size': 10},
-            'task_3_3': {'compile_time': 5, 'file_size': 10}
+            'output_1_1': {
+                'time': {'value': 5, 'unit': 's'},
+                'size': {'value': 10, 'unit': 'kb'}},
+            'output_2_1': {
+                'time': {'value': 5, 'unit': 's'},
+                'size': {'value': 10, 'unit': 'kb'}},
+            'output_2_2': {
+                'time': {'value': 5, 'unit': 's'},
+                'size': {'value': 10, 'unit': 'kb'}},
+            'output_3_1': {
+                'time': {'value': 5, 'unit': 's'},
+                'size': {'value': 10, 'unit': 'kb'}},
+            'output_3_2': {
+                'time': {'value': 5, 'unit': 's'},
+                'size': {'value': 10, 'unit': 'kb'}},
+            'output_3_3': {
+                'time': {'value': 5, 'unit': 's'},
+                'size': {'value': 10, 'unit': 'kb'}}
         }
 
         self.assertEqual(
@@ -130,281 +174,158 @@ class TestTool(unittest.TestCase):
                 mock.patch('json.dump', mock_json_dump):
             tool.save_data(mock_self)
 
-        self.assertTrue('task_1_1' in mock_Logs.pprint.mock_calls[1][1][1])
-        self.assertTrue('task_1_1' in mock_Logs.pprint.mock_calls[2][1][1])
+        # collect what's been written to stdout
+        stdout = ''
+        # check state of the various outputs.
+        for call in mock_Logs.pprint.mock_calls:
+            # for some reason this is needed to access the calls parameters
+            call = call[1]
+            message = call[1]
+            stdout += message
+            if 'output_1_1' in message:
+                # the only output which has been changed is output_1_1
+                self.assertIn('changed', message)
+                # the only output which has been removed is output_old_1
+            elif 'output_old_1' in message:
+                self.assertIn('removed', message)
+            elif 'output' in message:
+                # the rest is added
+                self.assertIn('added', message)
 
-        self.assertTrue('100.00%' in mock_Logs.pprint.mock_calls[1][1][1])
-        self.assertTrue('100.00%' in mock_Logs.pprint.mock_calls[2][1][1])
+            # check that the time uses s as a unit (not the best test)
+            if 'time' in message:
+                self.assertIn('s', message)
 
-        self.assertTrue('total' in mock_Logs.pprint.mock_calls[-1][1][1])
-        self.assertTrue('total' in mock_Logs.pprint.mock_calls[-2][1][1])
+            # check that the time uses kb as a unit (not the best test)
+            if 'size' in message:
+                self.assertIn('kb', message)
 
-    def test_get_data(self):
-        """Test the tool module's get_data function."""
-        tool = self.tool
+        # check that all
+        for t in mock_tasks:
+            for o in t.outputs:
+                key = o.nice_path()
+                # output_2_1 hasn't changed hence we don't want to see
+                # information about it.
+                if key == 'output_2_1':
+                    self.assertTrue(key not in stdout)
+                else:
+                    self.assertIn(key, stdout)
 
-        mock_self = mock.Mock()
-        # Set old_build_statistics to something so that the get_data assumes
-        # that the data has already been read.
-        tool.old_build_statistics = {'test': True}
-        tool.get_data(mock_self)
 
-        # Set old_build_statistics to something so that the get_data assumes
-        # that the data has already been read.
-        tool.old_build_statistics = None
-        mock_self.bld = mock.Mock()
-        mock_self.bld.bldnode = mock.Mock()
-        mock_self.bld.bldnode.nice_path = mock.Mock(
-            return_value='/non/existing/path')
-        tool.get_data(mock_self)
+class TestToolLive(unittest.TestCase):
 
-        self.assertEqual(tool.old_build_statistics, {})
+    """Something."""
 
-    def test_collect_data_from_tasks(self):
-        """Test the tool module's collect_data_from_tasks function."""
-        tool = self.tool
+    @classmethod
+    def setUpClass(cls):
+        """Something."""
+        cls.bundle_dependencies = 'bundle_dependencies'
+        test_project_name = 'test-project'
+        test_project_path = os.path.join(
+            os.path.dirname(__file__), test_project_name)
 
-        # setup mocks
-        mock_self = mock.Mock()
-        mock_self.compiled_tasks = [mock.Mock(), mock.Mock(), mock.Mock()]
-        mock_self.link_task = mock.Mock()
+        # setup
+        cls.old_cwd = os.getcwd()
+        os.chdir(test_project_path)
+        subprocess.check_output('ls')
+        subprocess.check_output([
+            sys.executable,
+            'waf',
+            'configure',
+            '--bundle-path={bundle_dependencies}'.format(
+                bundle_dependencies=cls.bundle_dependencies),
+            '--bundle=ALL,-waf-build-statistics',
+            '--waf-build-statistics-path=..'])
 
-        # monkey patch collect_data_from_run
-        tool.collect_data_from_run = lambda m1, m2: True
+    @classmethod
+    def tearDownClass(cls):
+        """Something."""
+        subprocess.check_output([sys.executable, 'waf', 'clean'])
+        subprocess.check_output([sys.executable, 'waf', 'distclean'])
+        subprocess.check_output(['rm', '-rf', cls.bundle_dependencies])
+        subprocess.check_output(['rm', '-rf', 'build'])
 
-        # call function to test
-        tool.collect_data_from_tasks(mock_self)
+        os.chdir(cls.old_cwd)
 
-        # make sure we've wrapped all the tasks.
-        for m in mock_self.compiled_tasks:
-            self.assertTrue(m.run is True)
-        self.assertTrue(mock_self.link_task.run is True)
+    def test_on_live_project(self):
+        """Something."""
+        output = subprocess.check_output([sys.executable, 'waf', 'build'])
 
-        # make sure we set the save_data function as a post_fun
-        mock_self.bld.add_post_fun.assert_called_once_with(tool.save_data)
+        # Make sure we are not printing anything since nothing has changed.
+        expected_output = (
+            "Waf: Entering directory `.*'\n"
+            "\[1\/3\] cxx: .*main\.cpp -> .*main\.cpp\.1\.o\n"
+            "\[2\/3\] cxx: .*some\.cpp -> .*some\.cpp\.1\.o\n"
+            "\[3\/3\] cxxprogram: .*main\.cpp\.1\.o .*some\.cpp\.1\.o -> "
+            ".*test-project\n"
+            "Waf: Leaving directory `.*'\n"
+            "'build' finished successfully \(.*\)")
 
-    def test_collect_data_from_run(self):
-        """Test the tool module's collect_data_from_run function."""
-        tool = self.tool
+        self.assertRegexpMatches(output, expected_output)
 
-        # setup mocks
-        mock_task = mock.Mock()
-        mock_output = mock.Mock()
-        mock_output.nice_path = lambda: "/nice/path"
-        mock_task.outputs = [mock_output]
-        mock_func = mock.Mock()
+        build_statistics_path = \
+            os.path.join('build', 'linux', 'build_statistics.json')
+        build_stats = None
+        with open(build_statistics_path) as build_statistics:
+            build_stats = json.load(build_statistics)
 
-        # monkey patch used functions
-        with mock.patch('os.path.getsize', lambda path: 1024), \
-                mock.patch('time.time', lambda: 100):
-            # call functions
-            tool.collect_data_from_run(mock_func, mock_task)()
+        self.assertIsNotNone(build_stats)
+        expect_outputs = [
+            'src/test_project/some.cpp.1.o',
+            'src/test_project/main.cpp.1.o',
+            'src/test_project/test-project']
 
-        mock_func.assert_called_once_with()
+        self.assertSetEqual(set(expect_outputs), set(build_stats.keys()))
 
-        expected_result = {
-            mock_output.nice_path(): {
-                'compile_time': 0,
-                'file_size': 1
-            }
-        }
-        self.assertEqual(tool.new_build_statistics, expected_result)
+        expected_results = ['time', 'size']
+        for output, results in build_stats.iteritems():
+            self.assertSetEqual(set(expected_results), set(results.keys()))
+            for result in results:
+                self.assertNotEqual(0, results[result]['value'])
 
-    def test_save_data(self):
-        """Test the tool module's save_data function."""
-        tool = self.tool
+        # add a file and rebuild to check that we register the event
+        file_to_create = os.path.join('src', 'test_project', 'test.cpp')
+        with open(file_to_create, 'a+'):
+            pass
 
-        # setup mocks
-        mock_self = mock.Mock()
-        mock_self.bldnode.nice_path = lambda: '.'
+        output = subprocess.check_output([sys.executable, 'waf', 'build'])
+        # the file is removed now since it doesn't affect the results and more
+        # importantly ensures that the state of the test project is not
+        # invalidated by left over files if a test fails.
+        os.remove(file_to_create)
 
-        mock_self.has_tool_option = lambda key: False
+        build_stats = None
+        with open(build_statistics_path) as build_statistics:
+            build_stats = json.load(build_statistics)
 
-        mocked_open = mock.mock_open()
-        tool.open = mocked_open
-        tool.json = mock.Mock()
+        self.assertIsNotNone(build_stats)
+        expect_outputs.append('src/test_project/test.cpp.1.o')
+        self.assertSetEqual(set(expect_outputs), set(build_stats.keys()))
 
-        tool.old_build_statistics = {
-            'something':
-            {
-                'compile_time': 4,
-                'file_size': 900
-            },
-            'something_else':
-            {
-                'compile_time': 42,
-                'file_size': 50
-            },
-            'something_old':
-            {
-                'compile_time': 990,
-                'file_size': 777
-            }
-        }
+        expected_output = (
+            "(.|\n)*\[ FILE   \] src/test_project/test\.cpp\.1\.o \(added\)"
+            "(.|\n)*\[ FILE   \] src/test_project/test-project \(changed\)"
+            "(.|\n)*")
 
-        tool.new_build_statistics = {
-            'something':
-            {
-                'compile_time': 4,
-                'file_size': 900
-            },
-            'something_else':
-            {
-                'compile_time': 1337,
-                'file_size': 451
-            },
-            'something_new':
-            {
-                'compile_time': 1337,
-                'file_size': 451
-            }
-        }
+        self.assertRegexpMatches(output, expected_output)
 
-        tool.print_summary = mock.Mock()
+        # test run after file has been removed.
+        output = subprocess.check_output([sys.executable, 'waf', 'build'])
 
-        # call function
-        tool.save_data(mock_self)
+        build_stats = None
+        with open(build_statistics_path) as build_statistics:
+            build_stats = json.load(build_statistics)
 
-        # check results
-        tool.print_summary.assert_called_once_with(
-            tool.old_build_statistics,
-            tool.new_build_statistics)
+        self.assertIsNotNone(build_stats)
+        expect_outputs.remove('src/test_project/test.cpp.1.o')
+        self.assertSetEqual(set(expect_outputs), set(build_stats.keys()))
 
-        mocked_open.assert_called_once_with(
-            os.path.join('.', tool.filename), 'w')
+        expected_output = (
+            "(.|\n)*\[ FILE   \] src/test_project/test\.cpp\.1\.o \(removed\)"
+            "(.|\n)*\[ FILE   \] src/test_project/test-project \(changed\)"
+            "(.|\n)*")
 
-        tool.json.dump.assert_called_once_with(
-                {
-                    'something':
-                    {
-                        'compile_time': 4,
-                        'file_size': 900
-                    },
-                    'something_else':
-                    {
-                        'compile_time': 1337,
-                        'file_size': 451
-                    },
-                    'something_new':
-                    {
-                        'compile_time': 1337,
-                        'file_size': 451
-                    },
-                    'something_old':
-                    {
-                        'compile_time': 990,
-                        'file_size': 777
-                    }
-                },
-                mocked_open()
-            )
-
-    def test_print_summary(self):
-        """Test the tool module's print_summary function."""
-        tool = self.tool
-
-        empty_new = {}
-        empty_old = {}
-        tool.compare_build = mock.Mock()
-        tool.print_summary(empty_new, empty_old)
-        self.assertEqual(0, tool.compare_build.call_count)
-
-        new = {
-            'something': {
-                'compile_time': 2,
-                'file_size': 222,
-            },
-            'something_else': {
-                'compile_time': 2,
-                'file_size': 222,
-            }
-        }
-
-        tool.print_summary(new, empty_old)
-
-        old = {
-            'something': {
-                'compile_time': 29,
-                'file_size': 333,
-            },
-            'something_else': {
-                'compile_time': 29,
-                'file_size': 333,
-            }
-        }
-
-        tool.print_summary(empty_new, old)
-
-        self.assertEqual(0, tool.compare_build.call_count)
-
-        tool.print_summary(new, old)
-        tool.compare_build.assert_has_calls(
-            [
-                mock.call(
-                    'something',
-                    {'compile_time': 2, 'file_size': 222},
-                    {'compile_time': 29, 'file_size': 333},
-                    'compile_time'),
-                mock.call(
-                    'something',
-                    {'compile_time': 2, 'file_size': 222},
-                    {'compile_time': 29, 'file_size': 333},
-                    'file_size'),
-                mock.call(
-                    'something_else',
-                    {'compile_time': 2, 'file_size': 222},
-                    {'compile_time': 29, 'file_size': 333},
-                    'compile_time'),
-                mock.call(
-                    'something_else',
-                    {'compile_time': 2, 'file_size': 222},
-                    {'compile_time': 29, 'file_size': 333},
-                    'file_size')
-            ], any_order=True)
-
-        tool.compare_build.assert_has_calls(
-            [
-                mock.call(
-                    'total',
-                    {'compile_time': 2 * 2, 'file_size': 222 * 2},
-                    {'compile_time': 29 * 2, 'file_size': 333 * 2},
-                    'compile_time'),
-                mock.call(
-                    'total',
-                    {'compile_time': 2 * 2, 'file_size': 222 * 2},
-                    {'compile_time': 29 * 2, 'file_size': 333 * 2},
-                    'file_size')
-            ], any_order=True)
-
-    def test_compare_build(self):
-        """Test the tool module's compare_build function."""
-        tool = self.tool
-
-        key = 'key'
-
-        old_stats = {
-            key: 4
-        }
-        new_stats = {
-            key: 8
-        }
-
-        build = 'test'
-
-        # check that something has been written
-        tool.compare_build(build, old_stats, new_stats, key)
-        self.assertEqual(1, tool.Logs.pprint.call_count)
-        args, _ = tool.Logs.pprint.call_args
-        self.assertEqual('PINK', args[0])
-
-        tool.compare_build(build, new_stats, old_stats, key)
-        self.assertEqual(2, tool.Logs.pprint.call_count)
-        args, _ = tool.Logs.pprint.call_args
-        self.assertEqual('CYAN', args[0])
-
-        # check that nothing has been written
-        tool.compare_build(build, old_stats, old_stats, key)
-        self.assertEqual(2, tool.Logs.pprint.call_count)
+        self.assertRegexpMatches(output, expected_output)
 
 
 def main():
