@@ -214,11 +214,11 @@ class TestTool(unittest.TestCase):
 
 class TestToolLive(unittest.TestCase):
 
-    """Something."""
+    """Test on test project using the most current version of the tool."""
 
     @classmethod
     def setUpClass(cls):
-        """Something."""
+        """Setup and configure test-project."""
         cls.bundle_dependencies = 'bundle_dependencies'
         test_project_name = 'test-project'
         test_project_path = os.path.join(
@@ -239,7 +239,7 @@ class TestToolLive(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        """Something."""
+        """Clean up after tests has been done on the test project."""
         subprocess.check_output([sys.executable, 'waf', 'clean'])
         subprocess.check_output([sys.executable, 'waf', 'distclean'])
         subprocess.check_output(['rm', '-rf', cls.bundle_dependencies])
@@ -248,7 +248,7 @@ class TestToolLive(unittest.TestCase):
         os.chdir(cls.old_cwd)
 
     def test_on_live_project(self):
-        """Something."""
+        """Test tool on a live test project."""
         output = subprocess.check_output([sys.executable, 'waf', 'build'])
 
         # Make sure we are not printing anything since nothing has changed.
