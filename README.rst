@@ -43,12 +43,12 @@ build_statistics.json has the following data design::
     {
         'output1':
         {
-            'time': {'value': 42, 'unit': 's'},
-            'size': {'value': 1337 'unit': 'kb'}
+            'time': {'value': 4200, 'unit': 's'},
+            'size': {'value': 1337, 'unit': 'kb'}
         },
         'output2':
         {
             'time': {'value': 113, 'unit': 's'},
-            'size': {'value': 859 'unit': 'kb'}
+            'size': {'value': 859, 'unit': 'kb'}
         }
     }
