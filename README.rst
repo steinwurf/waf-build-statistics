@@ -41,19 +41,14 @@ where ``some.json`` is the json file to compare with.
 build_statistics.json has the following data design::
 
     {
-        'source1': { size: 1 },
-        'source2': { size: 2 },
-        'source3': { size: 3 },
-        'target1':
+        'output1':
         {
-            'time': 42,
-            'size': 1337,
-            'sources': ['source1', 'source2']
+            'time': {'value': 42, 'unit': 's'},
+            'size': {'value': 1337 'unit': 'kb'}
         },
-        'target2':
+        'output2':
         {
-            'time': 113,
-            'size': 859,
-            'sources': ['source3']
+            'time': {'value': 113, 'unit': 's'},
+            'size': {'value': 859 'unit': 'kb'}
         }
     }
