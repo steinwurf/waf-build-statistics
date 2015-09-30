@@ -166,7 +166,7 @@ def generate_summaries(a, b):
         summary = generate_changed_summary(key, a, b)
 
         # only include if something actually changed.
-        if any([r['diff'] != 0 for r in summary['results'].values()]):
+        if any([r['difference'] != 0 for r in summary['results'].values()]):
             summaries.append(summary)
 
     return summaries
@@ -183,13 +183,13 @@ def generate_changed_summary(key, a, b):
         b_stat = b[stat]
         assert a_stat['unit'] == b_stat['unit']
 
-        diff = b_stat['value'] - a_stat['value']
-        percent = diff / a_stat['value'] * 100
+        difference = b_stat['value'] - a_stat['value']
+        percent = difference / a_stat['value'] * 100
         result['results'][stat] = {
             'unit':  b_stat['unit'],
             'value': b_stat['value'],
             'value_old': a_stat['value'],
-            'diff': diff,
+            'difference': difference,
             'percent': percent
         }
 
@@ -207,7 +207,7 @@ def generate_removed_summary(key, a):
             'unit': a_stat['unit'],
             'value': 0,
             'value_old': a_stat['value'],
-            'diff': -a_stat['value']
+            'difference': -a_stat['value']
         }
 
     return result
@@ -224,7 +224,7 @@ def generate_added_summary(key, b):
             'unit':  b_stat['unit'],
             'value': b_stat['value'],
             'value_old': 0,
-            'diff': b_stat['value']
+            'difference': b_stat['value']
         }
 
     return result
@@ -232,16 +232,16 @@ def generate_added_summary(key, b):
 
 def print_results(results):
     """Print result set."""
-    for stat, result in results.iteritems():
-        message = ('[ RESULT ]  {stat}   new {value:0.3f} {unit}\n'
-                   '[        ]         old {value_old:0.3f} {unit}\n'
-                   '[        ]        diff {diff:0.3f} {unit}')
+    for stat, result in results.items():
+        message = ('[ RESULT ]  {stat}   old {value_old:0.3f} {unit}\n'
+                   '[        ]         new {value:0.3f} {unit}\n'
+                   '[        ]  difference {difference:0.3f} {unit}')
 
         if 'percent' in result:
             message += ' ({percent:0.3f} %)'
 
         color = 'CYAN'
-        if result['diff'] > 0:
+        if result['difference'] > 0:
             color = 'PINK'
 
         Logs.pprint(color, message.format(stat=stat, **result))
@@ -282,8 +282,8 @@ def print_summaries(summaries):
         Logs.pprint('BOLD', '[ TOTAL  ] {}'.format(total_state))
         for result in total_summary.keys():
             total_result = total_summary[result]
-            total_result['diff'] = \
+            total_result['difference'] = \
                 total_result['value'] - total_result['value_old']
             total_result['percent'] = \
-                total_result['diff'] / total_result['value_old'] * 100
+                total_result['difference'] / total_result['value_old'] * 100
         print_results(total_summary)

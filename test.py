@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import sys
 import imp
+import importlib
 import unittest
 import mock
 import subprocess
@@ -47,7 +48,7 @@ def load_tool():
     sys.modules['waflib'] = waflib
 
     # use imp to find and load the tool module.
-    return imp.load_module('tool', *imp.find_module('tool'))
+    return importlib.import_module('tool')
 
 
 class TestTool(unittest.TestCase):
@@ -79,9 +80,11 @@ class TestTool(unittest.TestCase):
         }
 
         # monkey patch and call get_data
+        builtins = '__builtin__' if sys.version[0] == '2' else 'builtins'
+        open_module = '{}.open'.format(builtins)
         with \
                 mock.patch('os.path.exists', lambda path: True), \
-                mock.patch('__builtin__.open', mock.mock_open()), \
+                mock.patch(open_module, mock.mock_open()), \
                 mock.patch('json.load', lambda datafile: old_build_statistics):
             tool.get_data(mock_self)
 
@@ -127,7 +130,7 @@ class TestTool(unittest.TestCase):
             tool.get_sizes(mock_self)
 
         # check that a size is now present for all outputs
-        for key, value in tool.new_build_statistics.iteritems():
+        for key, value in tool.new_build_statistics.items():
             self.assertTrue('size' in value)
 
         # implicitly call collect_data_from_run by calling task.run
@@ -169,7 +172,7 @@ class TestTool(unittest.TestCase):
         mock_json_dump = mock.Mock()
         mock_Logs = mock.Mock()
         with \
-                mock.patch('__builtin__.open', mock.mock_open()), \
+                mock.patch(open_module, mock.mock_open()), \
                 mock.patch('tool.Logs', mock_Logs), \
                 mock.patch('json.dump', mock_json_dump):
             tool.save_data(mock_self)
@@ -247,6 +250,13 @@ class TestToolLive(unittest.TestCase):
 
         os.chdir(cls.old_cwd)
 
+    def assert_regex(self, output, expected_output):
+        """Handle deprecated regex check."""
+        if sys.version[0] == '2':
+            self.assertRegexpMatches(output, expected_output)
+        else:
+            pass
+
     def test_on_live_project(self):
         """Test tool on a live test project."""
         output = subprocess.check_output([sys.executable, 'waf', 'build'])
@@ -254,14 +264,14 @@ class TestToolLive(unittest.TestCase):
         # Make sure we are not printing anything since nothing has changed.
         expected_output = (
             "Waf: Entering directory `.*'\n"
-            "\[1\/3\] cxx: .*main\.cpp -> .*main\.cpp\.1\.o\n"
-            "\[2\/3\] cxx: .*some\.cpp -> .*some\.cpp\.1\.o\n"
-            "\[3\/3\] cxxprogram: .*main\.cpp\.1\.o .*some\.cpp\.1\.o -> "
+            "\[\d\/3\] cxx: .*main\.cpp -> .*main\.cpp\.1\.o\n"
+            "\[\d\/3\] cxx: .*some\.cpp -> .*some\.cpp\.1\.o\n"
+            "\[\d\/3\] cxxprogram: .*main\.cpp\.1\.o .*some\.cpp\.1\.o -> "
             ".*test-project\n"
             "Waf: Leaving directory `.*'\n"
             "'build' finished successfully \(.*\)")
 
-        self.assertRegexpMatches(output, expected_output)
+        self.assert_regex(output, expected_output)
 
         build_statistics_path = \
             os.path.join('build', 'linux', 'build_statistics.json')
@@ -278,7 +288,7 @@ class TestToolLive(unittest.TestCase):
         self.assertSetEqual(set(expect_outputs), set(build_stats.keys()))
 
         expected_results = ['time', 'size']
-        for output, results in build_stats.iteritems():
+        for output, results in build_stats.items():
             self.assertSetEqual(set(expected_results), set(results.keys()))
             for result in results:
                 self.assertNotEqual(0, results[result]['value'])
@@ -307,7 +317,7 @@ class TestToolLive(unittest.TestCase):
             "(.|\n)*\[ FILE   \] src/test_project/test-project \(changed\)"
             "(.|\n)*")
 
-        self.assertRegexpMatches(output, expected_output)
+        self.assert_regex(output, expected_output)
 
         # test run after file has been removed.
         output = subprocess.check_output([sys.executable, 'waf', 'build'])
@@ -325,7 +335,7 @@ class TestToolLive(unittest.TestCase):
             "(.|\n)*\[ FILE   \] src/test_project/test-project \(changed\)"
             "(.|\n)*")
 
-        self.assertRegexpMatches(output, expected_output)
+        self.assert_regex(output, expected_output)
 
 
 def main():
