@@ -8,7 +8,7 @@ The actual funcionality of this tool is found in tool.py in this repository.
 """
 
 APPNAME = 'waf-build-statistics'
-VERSION = '2.0.0'
+VERSION = '3.0.0'
 
 
 def configure(conf):
