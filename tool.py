@@ -22,20 +22,6 @@ old_build_statistics = {}
 new_build_statistics = {}
 
 
-def path_to_key(path):
-    """
-    Convert a path to an appropiate key.
-
-    If we use the "correct" path it will contain build specific folders, making
-    it impossible to compare two otherwise comparable builds. E.g., two builds
-    which are using two different mkspecs.
-    """
-    path = path.split(os.sep)
-    if path[0] == 'build':
-        path = path[2:]
-    return os.path.join(*path)
-
-
 @TaskGen.feature('*')
 @TaskGen.before_method('process_source')
 def get_data(self):
@@ -45,7 +31,7 @@ def get_data(self):
     Before processing any sources read the past build statistics.
     """
     if not old_build_statistics:
-        f = os.path.join(self.bld.bldnode.nice_path(), filename)
+        f = os.path.join(self.bld.bldnode.srcpath(), filename)
         if os.path.exists(f):
             with open(f) as data_file:
                 old_build_statistics.update(json.load(data_file))
@@ -70,8 +56,7 @@ def collect_data_from_tasks(self):
     for task in tasks:
         task.run = collect_data_from_run(task.run, task)
         for output in task.outputs:
-            key = path_to_key(output.nice_path())
-            new_build_statistics[key] = {}
+            new_build_statistics[output.bldpath()] = {}
 
     if 'post_funs' not in dir(self.bld) or get_sizes not in self.bld.post_funs:
         self.bld.add_post_fun(get_sizes)
@@ -89,8 +74,8 @@ def get_sizes(self):
 
     for task in tasks:
         for output in task.outputs:
-            key = path_to_key(output.nice_path())
-            value = os.path.getsize(output.nice_path()) / 1024.0
+            key = output.bldpath()
+            value = os.path.getsize(output.srcpath()) / 1024.0
             new_build_statistics[key]['size'] = {'value': value, 'unit': 'kb'}
 
 
@@ -101,7 +86,7 @@ def collect_data_from_run(f, task):
         return_value = f()
         stop = time.time()
         for output in task.outputs:
-            key = path_to_key(output.nice_path())
+            key = output.bldpath()
             value = (stop - start)
             new_build_statistics[key]['time'] = {'value': value, 'unit': 's'}
 
@@ -142,7 +127,7 @@ def save_data(self):
         summaries = generate_summaries(compare_stats, build_statistics)
         print_summaries(summaries)
 
-    f = os.path.join(self.bldnode.nice_path(), filename)
+    f = os.path.join(self.bldnode.srcpath(), filename)
     with open(f, 'w') as outfile:
         json.dump(build_statistics, outfile)
 

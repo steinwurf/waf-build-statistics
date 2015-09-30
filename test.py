@@ -60,7 +60,7 @@ class TestTool(unittest.TestCase):
         tool = load_tool()
 
         mock_self = mock.Mock()
-        mock_self.bld.bldnode.nice_path = lambda: '.'
+        mock_self.bld.bldnode.srcpath = lambda: '.'
 
         old_build_statistics = {
             'output_old_1': {
@@ -105,8 +105,10 @@ class TestTool(unittest.TestCase):
             task.outputs = []
             for j in range(1, i + 1):
                 mock_output = mock.Mock()
-                mock_output.nice_path = mock.Mock(
+                mock_output.bldpath = mock.Mock(
                     return_value='output_{}_{}'.format(i, j))
+                mock_output.srcpath = mock.Mock(
+                    return_value='build/' + mock_output.bldpath())
                 task.outputs.append(mock_output)
             i += 1
 
@@ -119,7 +121,7 @@ class TestTool(unittest.TestCase):
 
         # check that all tasks has been created
         self.assertEqual(
-            set([o.nice_path() for t in mock_tasks for o in t.outputs]),
+            set([o.bldpath() for t in mock_tasks for o in t.outputs]),
             set(tool.new_build_statistics.keys()))
 
         mock_group = mock.Mock()
@@ -166,8 +168,7 @@ class TestTool(unittest.TestCase):
             tool.new_build_statistics)
 
         # setup mocks for save_data
-        mock_self.has_tool_option = lambda option: False
-        mock_self.bldnode.nice_path = mock_self.bld.bldnode.nice_path
+        mock_self.bld.has_tool_option = lambda option: False
         # call save_data
         mock_json_dump = mock.Mock()
         mock_Logs = mock.Mock()
@@ -175,7 +176,7 @@ class TestTool(unittest.TestCase):
                 mock.patch(open_module, mock.mock_open()), \
                 mock.patch('tool.Logs', mock_Logs), \
                 mock.patch('json.dump', mock_json_dump):
-            tool.save_data(mock_self)
+            tool.save_data(mock_self.bld)
 
         # collect what's been written to stdout
         stdout = ''
@@ -206,7 +207,7 @@ class TestTool(unittest.TestCase):
         # check that all
         for t in mock_tasks:
             for o in t.outputs:
-                key = o.nice_path()
+                key = o.bldpath()
                 # output_2_1 hasn't changed hence we don't want to see
                 # information about it.
                 if key == 'output_2_1':
@@ -264,10 +265,9 @@ class TestToolLive(unittest.TestCase):
         # Make sure we are not printing anything since nothing has changed.
         expected_output = (
             "Waf: Entering directory `.*'\n"
-            "\[\d\/3\] cxx: .*main\.cpp -> .*main\.cpp\.1\.o\n"
-            "\[\d\/3\] cxx: .*some\.cpp -> .*some\.cpp\.1\.o\n"
-            "\[\d\/3\] cxxprogram: .*main\.cpp\.1\.o .*some\.cpp\.1\.o -> "
-            ".*test-project\n"
+            "\[\d\/3\] Compiling .*main\.cpp\n"
+            "\[\d\/3\] Compiling .*some\.cpp\n"
+            "\[\d\/3\] Linking .*test-project.*\n"
             "Waf: Leaving directory `.*'\n"
             "'build' finished successfully \(.*\)")
 
