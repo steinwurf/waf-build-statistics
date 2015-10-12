@@ -220,6 +220,8 @@ class TestToolLive(unittest.TestCase):
 
     """Test on test project using the most current version of the tool."""
 
+    file_to_create = os.path.join('src', 'test_project', 'test.cpp')
+
     @classmethod
     def setUpClass(cls):
         """Setup and configure test-project."""
@@ -231,7 +233,12 @@ class TestToolLive(unittest.TestCase):
         # setup
         cls.old_cwd = os.getcwd()
         os.chdir(test_project_path)
-        subprocess.check_output('ls')
+
+        # remove test file if it already exists. This may happen due to test
+        # failure.
+        if os.path.exists(cls.file_to_create):
+            os.remove(cls.file_to_create)
+
         subprocess.check_output([
             sys.executable,
             'waf',
@@ -294,15 +301,14 @@ class TestToolLive(unittest.TestCase):
                 self.assertNotEqual(0, results[result]['value'])
 
         # add a file and rebuild to check that we register the event
-        file_to_create = os.path.join('src', 'test_project', 'test.cpp')
-        with open(file_to_create, 'a+'):
+        with open(TestToolLive.file_to_create, 'a+'):
             pass
 
         output = subprocess.check_output([sys.executable, 'waf', 'build'])
         # the file is removed now since it doesn't affect the results and more
         # importantly ensures that the state of the test project is not
         # invalidated by left over files if a test fails.
-        os.remove(file_to_create)
+        os.remove(TestToolLive.file_to_create)
 
         build_stats = None
         with open(build_statistics_path) as build_statistics:

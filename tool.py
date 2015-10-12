@@ -123,9 +123,13 @@ def save_data(self):
             compare_stats = {}
             Logs.warn('{} does not exists.'.format(compare_with))
 
-    if compare_stats:
+    stats_limit = 0
+    if self.has_tool_option('stats_limit'):
+        stats_limit = int(self.get_tool_option('stats_limit'))
+
+    if compare_stats or stats_limit < 0:
         summaries = generate_summaries(compare_stats, build_statistics)
-        print_summaries(summaries)
+        print_summaries(summaries, stats_limit)
 
     f = os.path.join(self.bldnode.srcpath(), filename)
     with open(f, 'w') as outfile:
@@ -138,21 +142,15 @@ def generate_summaries(a, b):
 
     # removed
     for key in set(a) - set(b):
-        summary = generate_removed_summary(key, a)
-        summaries.append(summary)
+        summaries.append(generate_removed_summary(key, a))
 
     # added
     for key in set(b) - set(a):
-        summary = generate_added_summary(key, b)
-        summaries.append(summary)
+        summaries.append(generate_added_summary(key, b))
 
     # changed
     for key in set(a) & set(b):
-        summary = generate_changed_summary(key, a, b)
-
-        # only include if something actually changed.
-        if any([r['difference'] != 0 for r in summary['results'].values()]):
-            summaries.append(summary)
+        summaries.append(generate_changed_summary(key, a, b))
 
     return summaries
 
@@ -232,14 +230,19 @@ def print_results(results):
         Logs.pprint(color, message.format(stat=stat, **result))
 
 
-def print_summaries(summaries):
+def print_summaries(summaries, limit=0):
     """Print total and general summaries nicely."""
     total_summary = None
     total_state = {'removed': 0, 'added': 0, 'changed': 0}
     for summary in summaries:
+        results = summary['results']
+
+        # pass if the change is below a certain limit.
+        if all([abs(r['difference']) <= limit for r in results.values()]):
+            continue
+
         # print summary
         Logs.pprint('BOLD', '[ FILE   ] {file} ({state})'.format(**summary))
-        results = summary['results']
         print_results(results)
 
         # maintain total summary
